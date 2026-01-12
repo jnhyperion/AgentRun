@@ -149,7 +149,7 @@ class AgentRun:
 
         def target():
             nonlocal exit_code, output
-            exec_log = container.exec_run(cmd=cmd, workdir=os.path.join("/code", self.sandbox_dir))
+            exec_log = container.exec_run(cmd=["sh", "-c", cmd], workdir=os.path.join("/code", self.sandbox_dir))
             exit_code, output = exec_log.exit_code, exec_log.output
 
         thread = Thread(target=target)

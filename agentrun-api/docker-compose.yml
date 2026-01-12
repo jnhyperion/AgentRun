@@ -1,11 +1,12 @@
 services:
   api:
     build:
-      context: ./ 
-      dockerfile: docker/api/Dockerfile
+      context: ../ 
+      dockerfile: agentrun-api/docker/api/Dockerfile
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
-      - ./src:/code 
+      - ./src/api:/code/api
+      - ../agentrun:/code/agentrun
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8000:8000"
@@ -14,8 +15,8 @@ services:
 
   python_runner:
     build:
-      context: ./
-      dockerfile: docker/code_runner/Dockerfile
+      context: ../
+      dockerfile: agentrun-api/docker/code_runner/Dockerfile
     volumes:
       - code_execution_volume:/code
     command: ["tail", "-f", "/dev/null"] 

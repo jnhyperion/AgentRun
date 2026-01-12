@@ -6,7 +6,13 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /code
 
-COPY ./requirements.txt /code/
-RUN pip install -r requirements.txt
+# Copy the agentrun package first (for -e .. in requirements.txt)
+COPY ./agentrun /code/agentrun
+COPY ./pyproject.toml /code/
 
-COPY ../ /code/
+# Install dependencies
+COPY ./agentrun-api/requirements.txt /code/agentrun-api/
+RUN pip install -r agentrun-api/requirements.txt
+
+# Copy the API source
+COPY ./agentrun-api/src /code/

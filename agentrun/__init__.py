@@ -4,10 +4,11 @@ import ast
 import os
 import sys
 import tarfile
-import tempfile
+import time
 from io import BytesIO
+from queue import Empty, Queue
 from threading import Thread
-from typing import Any, Union
+from typing import Any, Generator, Union
 from uuid import uuid4
 
 import docker
@@ -129,6 +130,77 @@ class AgentRun:
         output = self.install_dependencies(container, self.cached_dependencies)
         if output != "Dependencies installed successfully.":
             raise ValueError(output)
+
+    def execute_command_in_container_stream_mode(
+        self, container: Container, cmd: str, timeout: int
+    ) -> Generator[str, None, int]:
+        """Execute a command in a Docker container and stream output with a timeout.
+
+        Yields decoded output chunks (str) as they are produced. When the generator
+        is exhausted, the exit code is available as StopIteration.value.
+
+        Args:
+            container: Docker container object
+            cmd: Command to execute (passed to sh -c)
+            timeout: Maximum time in seconds to wait for the command to complete
+
+        Yields:
+            str: Decoded output chunks (stdout/stderr combined)
+
+        Raises:
+            CommandTimeout: If the command does not complete within timeout seconds.
+        """
+        workdir = os.path.join("/code", self.sandbox_dir)
+        exec_id = self.client.api.exec_create(
+            container.id,
+            ["sh", "-c", cmd],
+            workdir=workdir,
+            stdout=True,
+            stderr=True,
+        )["Id"]
+        stream = self.client.api.exec_start(exec_id, stream=True, demux=False)
+        queue: Queue = Queue()
+        exit_code: int | None = None
+
+        def consume_stream() -> None:
+            nonlocal exit_code
+            try:
+                for chunk in stream:
+                    if chunk:
+                        queue.put(("chunk", chunk))
+                queue.put(("done", None))
+            except Exception as e:
+                queue.put(("error", e))
+
+        thread = Thread(target=consume_stream)
+        thread.start()
+        start_time = time.monotonic()
+
+        try:
+            while True:
+                elapsed = time.monotonic() - start_time
+                if elapsed >= timeout:
+                    raise self.CommandTimeout("Command timed out")
+                try:
+                    kind, payload = queue.get(timeout=min(0.2, timeout - elapsed))
+                except Empty:
+                    continue
+                if kind == "chunk":
+                    yield payload.decode("utf-8", errors="replace")
+                elif kind == "done":
+                    break
+                elif kind == "error":
+                    raise payload
+            thread.join(timeout=1)
+            exit_code = self.client.api.exec_inspect(exec_id)["ExitCode"]
+        finally:
+            if hasattr(stream, "close"):
+                try:
+                    stream.close()
+                except OSError:
+                    # Socket may already be closed when exec finishes or client disconnects
+                    pass
+        return exit_code  # noqa: RET501  # Generator return becomes StopIteration.value
 
     def execute_command_in_container(
         self, container: Container, cmd: str, timeout: int

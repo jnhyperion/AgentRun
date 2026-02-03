@@ -65,20 +65,23 @@ git clone https://github.com/Jonathan-Adly/agentrun
 cd agentrun/agentrun-api
 cp .env.example .env.dev
 docker-compose up -d --build
+
+# Rebuild and start fresh (removes volume): 
+docker compose stop python_runner && docker compose rm -f python_runner && docker volume ls -q | grep code_execution_volume | xargs -r docker volume rm; docker compose up -d --build --force-recreate --no-deps python_runner
+# Full rebuild (no cache + removes volume): 
+docker compose stop python_runner && docker compose rm -f python_runner && docker volume ls -q | grep code_execution_volume | xargs -r docker volume rm; docker compose build --no-cache python_runner && docker compose up -d --force-recreate --no-deps python_runner
+
+# fix apt source
+sed -i 's|^deb http|deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] http|g' /etc/apt/sources.list
 ```
+
 
 Then - you have a fully up and running code execution API. *Code in --> output out* 
 
-```javascript
-fetch('http://localhost:8000/v1/run/', {
-    method: 'POST',
-    headers: {
-        'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-        code: "print('hello, world!')"
-    })
-})
+```bash
+curl -X POST http://qa-ubuntu-08:8001/v1/run/ \
+  -H "Content-Type: application/json" \
+  -d '{"command": "pip --version", "sandbox_dir": "."}'
 .then(response => response.json())
 .then(data => console.log(data))
 .catch(error => console.error('Error:', error));

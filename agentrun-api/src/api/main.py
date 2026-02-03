@@ -1,8 +1,9 @@
+import json
 import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
 from agentrun import AgentRun
@@ -56,6 +57,50 @@ async def health():
 async def redirect_docs():
     return RedirectResponse(url="/docs")
 
+
+def _run_command_stream_sse(runner: AgentRun, container, command: str):
+    """Generator that yields Server-Sent Events: output chunks then a final 'done' event with exit_code."""
+    gen = runner.execute_command_in_container_stream_mode(
+        container, command, runner.default_timeout
+    )
+    exit_code = -1
+    try:
+        while True:
+            try:
+                chunk = next(gen)
+            except StopIteration as e:
+                exit_code = e.value if e.value is not None else -1
+                break
+            except runner.CommandTimeout:
+                exit_code = -1
+                yield f"event: error\ndata: {json.dumps({'message': 'Command timed out'})}\n\n"
+                break
+            # SSE: one event per chunk (JSON so newlines/special chars are safe)
+            yield f"data: {json.dumps(chunk)}\n\n"
+    finally:
+        # Final event so client knows stream ended and whether it succeeded
+        yield f"event: done\ndata: {json.dumps({'success': exit_code == 0, 'exit_code': exit_code})}\n\n"
+
+
+@app.post("/v1/run_stream/")
+def run_command_stream(input_schema: RunInputSchema):
+    """Stream command output as Server-Sent Events. Each event is a chunk of stdout/stderr.
+    A final event with event type 'done' contains {success, exit_code}."""
+    runner = AgentRun(
+        sandbox_dir=input_schema.sandbox_dir,
+        container_name=os.environ.get("CONTAINER_NAME", "agentrun-api-python_runner-1"),
+        default_timeout=60 * 10,
+    )
+    container = runner.client.containers.get(runner.container_name)
+    return StreamingResponse(
+        _run_command_stream_sse(runner, container, input_schema.command),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 @app.post("/v1/run/", response_model=OutputSchema)
 def run_command(input_schema: RunInputSchema):

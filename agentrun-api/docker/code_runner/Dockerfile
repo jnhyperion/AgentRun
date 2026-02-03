@@ -22,4 +22,4 @@ WORKDIR /code
 
 # Optional: Only if you have specific dependencies
 # COPY --chown=appuser:appuser requirements.txt .
-# RUN pip install --user -r requirements.txt
+RUN pip install claude-agent-sdk

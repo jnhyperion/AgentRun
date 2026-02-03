@@ -1,15 +1,22 @@
-FROM python:3.12.2-slim-bullseye
+FROM python:3.12-slim-bookworm
 
 # Security best practices
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=off \
+    PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=on \
-    PIP_DEFAULT_TIMEOUT=100
+    PIP_DEFAULT_TIMEOUT=100 \
+    PIP_RETRIES=5
 
-# Install jq
-RUN apt-get update && apt-get install -y --no-install-recommends jq \
-    && rm -rf /var/lib/apt/lists/*
+# Install jq and ensure CA certs are up to date (helps with SSL to PyPI)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    jq \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && update-ca-certificates
+
+# Install Python deps as root so site-packages is writeable; avoids SSL issues from user install path
+RUN pip install --no-cache-dir claude-agent-sdk
 
 # Create a non-root user with its home directory
 RUN useradd --create-home pythonuser
@@ -19,7 +26,3 @@ RUN mkdir -p /code && chown pythonuser:pythonuser /code
 
 USER pythonuser
 WORKDIR /code
-
-# Optional: Only if you have specific dependencies
-# COPY --chown=appuser:appuser requirements.txt .
-RUN pip install claude-agent-sdk
